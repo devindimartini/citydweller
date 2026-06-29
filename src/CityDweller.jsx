@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "./supabaseClient";
-import { loadAll, saveItem, deleteItem as dbDeleteItem, saveTransit, deleteTransit as dbDeleteTransit, saveEvent, deleteEvent as dbDeleteEvent, saveNotebook, deleteNotebook as dbDeleteNotebook, savePinCategories, savePathCategories } from "./data";
+import { loadAll, saveItem, deleteItem as dbDeleteItem, saveTransit, deleteTransit as dbDeleteTransit, saveEvent, deleteEvent as dbDeleteEvent, saveNotebook, deleteNotebook as dbDeleteNotebook, savePinCategories, savePathCategories, uploadMedia } from "./data";
 
 /*
   CityDweller — local v3
@@ -847,12 +847,19 @@ export default function CityDweller({ user, signOut }) {
 
   const addMedia = (id, files) => {
     const arr = Array.from(files);
-    Promise.all(arr.map((f) => new Promise((res) => {
-      const reader = new FileReader();
-      reader.onload = () => res({ id: uid(), type: f.type.startsWith("video") ? "video" : "image", name: f.name, url: reader.result });
-      reader.readAsDataURL(f);
-    }))).then((media) => {
-      setItems((prev) => prev.map((it) => it.id === id ? { ...it, media: [...it.media, ...media] } : it));
+    if (!arr.length) return;
+    // upload each file to storage; on success store the returned public URL
+    Promise.all(arr.map((f) =>
+      uploadMedia(f, userId).catch((e) => { console.error("upload media", e); return null; })
+    )).then((results) => {
+      const media = results.filter(Boolean);
+      if (!media.length) return;
+      setItems((prev) => {
+        const next = prev.map((it) => it.id === id ? { ...it, media: [...(it.media || []), ...media] } : it);
+        const u = next.find((it) => it.id === id);
+        if (u) persistItem(u);
+        return next;
+      });
     });
   };
 
@@ -961,17 +968,16 @@ export default function CityDweller({ user, signOut }) {
       setSnapMsg("Location isn't available on this device, so Snap can't place the pin.");
       return;
     }
-    // read the file while we wait for location
-    const reader = new FileReader();
-    reader.onload = () => {
-      const media = { id: uid(), type: file.type.startsWith("video") ? "video" : "image", name: file.name, url: reader.result };
-      navigator.geolocation.getCurrentPosition(
-        (pos) => createSnapPin(pos.coords.latitude, pos.coords.longitude, media),
-        () => setSnapMsg("Snap needs your location to place the pin. Enable location access and try again."),
-        { enableHighAccuracy: true, timeout: 8000 }
-      );
-    };
-    reader.readAsDataURL(file);
+    // get location, then upload the photo to storage and create the pin
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        uploadMedia(file, userId)
+          .then((media) => createSnapPin(pos.coords.latitude, pos.coords.longitude, media))
+          .catch((e) => { console.error("snap upload", e); setSnapMsg("Couldn't upload the photo. Try again."); });
+      },
+      () => setSnapMsg("Snap needs your location to place the pin. Enable location access and try again."),
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
   }
 
   function createSnapPin(lat, lng, media) {
@@ -1064,11 +1070,14 @@ export default function CityDweller({ user, signOut }) {
   }
   function addEventMedia(id, files) {
     const arr = Array.from(files);
-    Promise.all(arr.map((f) => new Promise((res) => {
-      const reader = new FileReader();
-      reader.onload = () => res({ id: uid(), type: f.type.startsWith("video") ? "video" : "image", name: f.name, url: reader.result });
-      reader.readAsDataURL(f);
-    }))).then((media) => updateEvent(id, { media: [...(events.find((e) => e.id === id)?.media || []), ...media] }));
+    if (!arr.length) return;
+    Promise.all(arr.map((f) =>
+      uploadMedia(f, userId).catch((e) => { console.error("upload event media", e); return null; })
+    )).then((results) => {
+      const media = results.filter(Boolean);
+      if (!media.length) return;
+      updateEvent(id, { media: [...(events.find((e) => e.id === id)?.media || []), ...media] });
+    });
   }
   // upcoming events sorted by soonest date, soonest first
   const upcomingEvents = events
@@ -1888,6 +1897,7 @@ export default function CityDweller({ user, signOut }) {
             item={items.find((it) => it.id === didYouGoFor)}
             onComplete={(payload) => completeWent(didYouGoFor, payload)}
             onClose={() => setDidYouGoFor(null)}
+            onUpload={(f) => uploadMedia(f, userId)}
           />
         )}
       </div>
@@ -1903,22 +1913,22 @@ export default function CityDweller({ user, signOut }) {
   );
 }
 
-function DidYouGoModal({ item, onComplete, onClose }) {
+function DidYouGoModal({ item, onComplete, onClose, onUpload }) {
   const s = makeStyles();
   const [step, setStep] = useState(1); // 1=date, 2=photos, 3=update
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
   const [media, setMedia] = useState([]);
   const [update, setUpdate] = useState("");
+  const [uploading, setUploading] = useState(false);
   const fileRef = useRef(null);
 
   function addFiles(files) {
     const arr = Array.from(files);
-    Promise.all(arr.map((f) => new Promise((res) => {
-      const reader = new FileReader();
-      reader.onload = () => res({ id: uid(), type: f.type.startsWith("video") ? "video" : "image", name: f.name, url: reader.result });
-      reader.readAsDataURL(f);
-    }))).then((m) => setMedia((prev) => [...prev, ...m]));
+    if (!arr.length) return;
+    setUploading(true);
+    Promise.all(arr.map((f) => onUpload(f).catch(() => null)))
+      .then((results) => { setMedia((prev) => [...prev, ...results.filter(Boolean)]); setUploading(false); });
   }
 
   function finish() {
@@ -1961,7 +1971,7 @@ function DidYouGoModal({ item, onComplete, onClose }) {
                 </div>
               )}
               <input ref={fileRef} type="file" accept="image/*,video/*" multiple style={{ display: "none" }} onChange={(e) => addFiles(e.target.files)} />
-              <button style={s.addBtnAlt} onClick={() => fileRef.current && fileRef.current.click()}>+ Add photos</button>
+              <button style={s.addBtnAlt} disabled={uploading} onClick={() => fileRef.current && fileRef.current.click()}>{uploading ? "Uploading…" : "+ Add photos"}</button>
               <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
                 <button style={s.cancelAdd} onClick={() => setStep(1)}>Back</button>
                 <button style={s.addBtn} onClick={() => setStep(3)}>Next</button>
