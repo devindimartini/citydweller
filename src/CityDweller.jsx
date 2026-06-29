@@ -756,6 +756,23 @@ export default function CityDweller({ user, signOut }) {
     }, 60);
   }
 
+  // pan to the item on the full map and CLOSE the panel (so it doesn't cover the map)
+  function locateAndClose(it) {
+    setView("map");
+    setSelectedId(it.id);
+    setPanelId(null);
+    setPanelMode("read");
+    const map = mapRef.current;
+    if (!map) return;
+    setTimeout(() => {
+      map.invalidateSize();
+      if (it.kind === "pin") map.setView([it.lat, it.lng], 15, { animate: true });
+      else map.fitBounds(it.path, { padding: [40, 40] });
+      const layer = layersRef.current[it.id];
+      if (layer && layer.openTooltip) layer.openTooltip();
+    }, 60);
+  }
+
   // open the reading panel without leaving the current view (used from the list)
   function openReading(it) {
     setSelectedId(it.id);
@@ -1218,9 +1235,11 @@ export default function CityDweller({ user, signOut }) {
           <span style={s.logoDot} />
           <span>CityDweller</span>
         </div>
-        <div style={s.tabs}>
-          <button style={s.signOutBtn} onClick={() => signOut && signOut()} title="Sign out">⎋ Sign out</button>
-        </div>
+        {view !== "map" && (
+          <div style={s.tabs}>
+            <button style={s.signOutBtn} onClick={() => signOut && signOut()} title="Sign out">⎋ Sign out</button>
+          </div>
+        )}
       </header>
 
       <div style={s.body}>
@@ -1753,7 +1772,7 @@ export default function CityDweller({ user, signOut }) {
             onClose={() => setPanelId(null)}
             onEdit={() => beginEdit(panelItem)}
             onToggleHidden={() => updateItem(panelItem.id, { hidden: !panelItem.hidden })}
-            onLocate={() => focusItem(panelItem, "read")}
+            onLocate={() => locateAndClose(panelItem)}
             onAddToNotebook={panelItem.kind === "pin" ? () => setAddToNotebookFor({ pinId: panelItem.id }) : null}
             onToggleFavorite={() => toggleFavorite(panelItem.id)}
           />
@@ -2593,7 +2612,7 @@ function makeStyles() {
     searchResultAddr: { fontSize: 12.5, color: C.sub, marginTop: 2 },
     snapMsg: { position: "absolute", bottom: 92, left: 12, right: 12, maxWidth: 420, margin: "0 auto", background: C.wishlist, color: "#fff", padding: "10px 36px 10px 14px", borderRadius: 12, fontSize: 13, zIndex: 650, boxShadow: "0 4px 16px rgba(0,0,0,0.18)" },
     snapMsgClose: { position: "absolute", top: 8, right: 10, border: "none", background: "transparent", color: "#fff", cursor: "pointer", fontSize: 14 },
-    mapToolbar: { position: "absolute", top: 52, left: 12, right: 12, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, zIndex: 600, flexWrap: "nowrap", pointerEvents: "none" },
+    mapToolbar: { position: "absolute", top: 12, left: 12, right: 12, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, zIndex: 600, flexWrap: "nowrap", pointerEvents: "none" },
     toolHint: { position: "absolute", top: 14, left: "50%", transform: "translateX(-50%)", fontSize: 12.5, color: C.text, background: "#fff", padding: "6px 12px", borderRadius: 20, boxShadow: "0 2px 8px rgba(0,0,0,0.12)", border: `1px solid ${C.border}`, pointerEvents: "auto", zIndex: 710, whiteSpace: "nowrap", maxWidth: "60%", overflow: "hidden", textOverflow: "ellipsis" },
     toolBtns: { display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end", pointerEvents: "auto", marginLeft: "auto" },
     filterWrap: { position: "relative" },
@@ -2621,7 +2640,7 @@ function makeStyles() {
     stationBtns: { display: "flex", gap: 2, alignItems: "center" },
     stationMove: { border: `1px solid ${C.border}`, background: C.card, color: C.text, cursor: "pointer", borderRadius: 6, width: 26, height: 30, fontSize: 13, padding: 0 },
     stationDel: { border: "none", background: "transparent", color: C.sub, cursor: "pointer", fontSize: 14, padding: "0 4px" },
-    eventsBox: { position: "absolute", top: 56, right: 12, width: 220, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, boxShadow: "0 4px 16px rgba(0,0,0,0.14)", padding: 10, zIndex: 550 },
+    eventsBox: { position: "absolute", top: 48, left: 12, width: 220, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, boxShadow: "0 4px 16px rgba(0,0,0,0.14)", padding: 10, zIndex: 550 },
     eventsBoxTitle: { fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: C.sub, marginBottom: 6 },
     eventsBoxRow: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, width: "100%", border: "none", background: "transparent", cursor: "pointer", padding: "6px 0", borderTop: `1px solid ${C.border}`, textAlign: "left" },
     eventsBoxName: { fontSize: 13, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
@@ -2675,8 +2694,8 @@ function makeStyles() {
     sectionTitle: { margin: 0, fontSize: 15, fontWeight: 600 },
     countPill: { background: C.bg, borderRadius: 12, padding: "1px 10px", fontSize: 12, color: C.sub },
     sectionEmpty: { fontSize: 13, color: C.sub, margin: "4px 0" },
-    cards: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12, alignItems: "start" },
-    cardWrap: { position: "relative" },
+    cards: { display: "flex", flexDirection: "row", gap: 12, alignItems: "stretch", overflowX: "auto", overflowY: "hidden", paddingBottom: 8, scrollSnapType: "x proximity", WebkitOverflowScrolling: "touch" },
+    cardWrap: { position: "relative", flex: "0 0 auto", width: 220, scrollSnapAlign: "start" },
     cardStar: { position: "absolute", top: 8, right: 8, zIndex: 2, border: "none", background: "rgba(255,255,255,0.9)", borderRadius: "50%", width: 28, height: 28, cursor: "pointer", fontSize: 15, color: C.sub, boxShadow: "0 1px 4px rgba(0,0,0,0.12)" },
     cardStarOn: { color: "#E0A21C" },
     favBtn: { border: "none", background: "transparent", cursor: "pointer", fontSize: 19, color: C.sub, padding: "0 4px" },
