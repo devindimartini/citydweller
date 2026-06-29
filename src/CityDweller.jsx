@@ -1,4 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
+import markerIcon from "leaflet/dist/images/marker-icon.png";
+import markerShadow from "leaflet/dist/images/marker-shadow.png";
+// Fix default marker icon paths when Leaflet is bundled (otherwise icons 404)
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({ iconRetinaUrl: markerIcon2x, iconUrl: markerIcon, shadowUrl: markerShadow });
+import { supabase } from "./supabaseClient";
 import { loadAll, saveItem, deleteItem as dbDeleteItem, saveTransit, deleteTransit as dbDeleteTransit, saveEvent, deleteEvent as dbDeleteEvent, saveNotebook, deleteNotebook as dbDeleteNotebook, savePinCategories, savePathCategories } from "./data";
 
 /*
@@ -30,8 +39,6 @@ import { loadAll, saveItem, deleteItem as dbDeleteItem, saveTransit, deleteTrans
   Data persists only in React state for this session.
 */
 
-const LEAFLET_CSS = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
-const LEAFLET_JS = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
 
 const STATUS = { VISITED: "visited", WISHLIST: "wishlist" };
 const DEFAULT_CATEGORIES = [
@@ -147,32 +154,14 @@ function previewHTML({ title, meta, note, thumb, dist, accent }) {
 }
 
 function loadLeaflet() {
-  return new Promise((resolve, reject) => {
-    if (window.L) return resolve(window.L);
-    if (!document.querySelector(`link[href="${LEAFLET_CSS}"]`)) {
-      const link = document.createElement("link");
-      link.rel = "stylesheet";
-      link.href = LEAFLET_CSS;
-      document.head.appendChild(link);
-    }
-    const existing = document.querySelector(`script[src="${LEAFLET_JS}"]`);
-    if (existing) {
-      existing.addEventListener("load", () => resolve(window.L));
-      existing.addEventListener("error", reject);
-      return;
-    }
-    const s = document.createElement("script");
-    s.src = LEAFLET_JS;
-    s.async = true;
-    s.onload = () => resolve(window.L);
-    s.onerror = reject;
-    document.head.appendChild(s);
+  return new Promise((resolve) => {
     if (!document.getElementById("cd-preview-css")) {
       const st = document.createElement("style");
       st.id = "cd-preview-css";
       st.textContent = ".cd-preview-popup .leaflet-popup-content{margin:0!important;width:190px!important;}.cd-preview-popup .leaflet-popup-content-wrapper{padding:0!important;overflow:hidden;border-radius:10px;}";
       document.head.appendChild(st);
     }
+    resolve(L);
   });
 }
 
@@ -395,20 +384,31 @@ export default function CityDweller({ user, signOut }) {
   useEffect(() => {
     let on = true;
     if (!userId) return;
-    loadAll()
-      .then((d) => {
-        if (!on) return;
-        setItems(d.items);
-        setTransit(d.transit);
-        setEvents(d.events);
-        setNotebooks(d.notebooks);
-        setCategories(d.categories.length ? d.categories : DEFAULT_CATEGORIES);
-        setPathCategories(d.pathCategories.length ? d.pathCategories : DEFAULT_PATH_CATEGORIES);
-        setMapCats(new Set((d.categories.length ? d.categories : DEFAULT_CATEGORIES).map((c) => c.name)));
-        setMapPathCats(new Set((d.pathCategories.length ? d.pathCategories : DEFAULT_PATH_CATEGORIES).map((c) => c.name)));
-        setLoaded(true);
-      })
-      .catch((e) => { if (on) { setLoadError(e.message || "Failed to load your data."); setLoaded(true); } });
+    setLoaded(false);
+    setLoadError("");
+
+    async function attempt(triesLeft) {
+      // make sure the session/token is actually restored before querying,
+      // otherwise a cold refresh races and RLS returns 403 on every table
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        if (triesLeft > 0) { setTimeout(() => on && attempt(triesLeft - 1), 250); return; }
+        throw new Error("Your session isn't ready yet. Try refreshing.");
+      }
+      const d = await loadAll();
+      if (!on) return;
+      setItems(d.items);
+      setTransit(d.transit);
+      setEvents(d.events);
+      setNotebooks(d.notebooks);
+      setCategories(d.categories.length ? d.categories : DEFAULT_CATEGORIES);
+      setPathCategories(d.pathCategories.length ? d.pathCategories : DEFAULT_PATH_CATEGORIES);
+      setMapCats(new Set((d.categories.length ? d.categories : DEFAULT_CATEGORIES).map((c) => c.name)));
+      setMapPathCats(new Set((d.pathCategories.length ? d.pathCategories : DEFAULT_PATH_CATEGORIES).map((c) => c.name)));
+      setLoaded(true);
+    }
+
+    attempt(8).catch((e) => { if (on) { setLoadError(e.message || "Failed to load your data."); setLoaded(true); } });
     return () => { on = false; };
   }, [userId]);
 
@@ -2287,9 +2287,8 @@ function ReadPanel({ item, onClose, onEdit, onToggleHidden, onLocate, onAddToNot
 
   // mini map for this item
   useEffect(() => {
-    if (!coord || !window.L || !miniRef.current) return;
+    if (!coord || !miniRef.current) return;
     if (miniMap.current) { miniMap.current.remove(); miniMap.current = null; }
-    const L = window.L;
     const m = L.map(miniRef.current, { zoomControl: false, attributionControl: false, dragging: false, scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false, keyboard: false, tap: false });
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(m);
     if (item.kind === "pin") { m.setView([coord.lat, coord.lng], 15); L.marker([coord.lat, coord.lng]).addTo(m); }
@@ -2539,8 +2538,8 @@ function makeStyles() {
     tabs: { display: "flex", gap: 4, background: C.bg, padding: 3, borderRadius: 10 },
     tab: { border: "none", background: "transparent", padding: "6px 16px", borderRadius: 8, cursor: "pointer", fontSize: 14, color: C.sub },
     tabActive: { background: C.card, color: C.text, fontWeight: 600, boxShadow: "0 1px 2px rgba(0,0,0,0.08)" },
-    body: { flex: 1, position: "relative", display: "flex", overflow: "hidden" },
-    mapWrap: { flex: 1, flexDirection: "column", position: "relative" },
+    body: { flex: 1, position: "relative", display: "flex", overflow: "hidden", minHeight: 0 },
+    mapWrap: { flex: 1, flexDirection: "column", position: "relative", minHeight: 0, height: "100%" },
     fabRow: { position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 16, zIndex: 600, alignItems: "center" },
     fab: { width: 52, height: 52, borderRadius: "50%", border: `1px solid ${C.border}`, background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 3px 10px rgba(0,0,0,0.18)", padding: 0 },
     fabActive: { borderColor: "#185FA5", boxShadow: "0 0 0 3px rgba(24,95,165,0.35), 0 3px 10px rgba(0,0,0,0.18)" },
@@ -2598,7 +2597,7 @@ function makeStyles() {
     cancelAdd: { border: `1px solid ${C.border}`, background: C.card, color: C.sub, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13 },
     divider: { width: 1, height: 18, background: C.border, display: "inline-block" },
     drawBanner: { position: "absolute", top: 52, left: "50%", transform: "translateX(-50%)", background: C.shape, color: "#fff", padding: "6px 14px", borderRadius: 20, fontSize: 12.5, zIndex: 500, boxShadow: "0 2px 8px rgba(0,0,0,0.2)", maxWidth: "90%", textAlign: "center" },
-    map: { flex: 1, width: "100%" },
+    map: { position: "absolute", inset: 0, width: "100%", height: "100%" },
     viewSwitcher: { position: "absolute", bottom: 28, left: 12, zIndex: 540, display: "inline-flex", gap: 2, background: "#fff", borderRadius: 8, padding: 3, boxShadow: "0 2px 8px rgba(0,0,0,0.18)" },
     viewBtn: { border: "none", background: "transparent", padding: "5px 10px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.sub },
     viewBtnOn: { background: C.shape, color: "#fff" },
