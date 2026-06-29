@@ -1,12 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
-import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
-import markerIcon from "leaflet/dist/images/marker-icon.png";
-import markerShadow from "leaflet/dist/images/marker-shadow.png";
-// Fix default marker icon paths when Leaflet is bundled (otherwise icons 404)
-delete L.Icon.Default.prototype._getIconUrl;
-L.Icon.Default.mergeOptions({ iconRetinaUrl: markerIcon2x, iconUrl: markerIcon, shadowUrl: markerShadow });
 import { supabase } from "./supabaseClient";
 import { loadAll, saveItem, deleteItem as dbDeleteItem, saveTransit, deleteTransit as dbDeleteTransit, saveEvent, deleteEvent as dbDeleteEvent, saveNotebook, deleteNotebook as dbDeleteNotebook, savePinCategories, savePathCategories } from "./data";
 
@@ -153,15 +145,36 @@ function previewHTML({ title, meta, note, thumb, dist, accent }) {
     </div>`;
 }
 
+const LEAFLET_CSS = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
+const LEAFLET_JS = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
 function loadLeaflet() {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    if (window.L) return resolve(window.L);
+    if (!document.querySelector(`link[href="${LEAFLET_CSS}"]`)) {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = LEAFLET_CSS;
+      document.head.appendChild(link);
+    }
     if (!document.getElementById("cd-preview-css")) {
       const st = document.createElement("style");
       st.id = "cd-preview-css";
       st.textContent = ".cd-preview-popup .leaflet-popup-content{margin:0!important;width:190px!important;}.cd-preview-popup .leaflet-popup-content-wrapper{padding:0!important;overflow:hidden;border-radius:10px;}";
       document.head.appendChild(st);
     }
-    resolve(L);
+    const existing = document.querySelector(`script[src="${LEAFLET_JS}"]`);
+    if (existing) {
+      if (window.L) return resolve(window.L);
+      existing.addEventListener("load", () => resolve(window.L));
+      existing.addEventListener("error", reject);
+      return;
+    }
+    const s = document.createElement("script");
+    s.src = LEAFLET_JS;
+    s.async = true;
+    s.onload = () => resolve(window.L);
+    s.onerror = reject;
+    document.head.appendChild(s);
   });
 }
 
@@ -445,6 +458,7 @@ export default function CityDweller({ user, signOut }) {
     let cancelled = false;
     loadLeaflet().then((L) => {
       if (cancelled || mapRef.current) return;
+      if (!mapEl.current) { console.error("MAP INIT: container not ready"); setReady(false); return; }
       LRef.current = L;
       const map = L.map(mapEl.current, { zoomControl: false }).setView([14.5764, 121.0851], 12);
       L.control.zoom({ position: "bottomright" }).addTo(map);
@@ -514,7 +528,7 @@ export default function CityDweller({ user, signOut }) {
       window.addEventListener("touchend", up);
 
       setReady(true);
-    }).catch(() => setReady(false));
+    }).catch((err) => { console.error("MAP INIT FAILED:", err); setReady(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line
   }, []);
@@ -2287,8 +2301,9 @@ function ReadPanel({ item, onClose, onEdit, onToggleHidden, onLocate, onAddToNot
 
   // mini map for this item
   useEffect(() => {
-    if (!coord || !miniRef.current) return;
+    if (!coord || !window.L || !miniRef.current) return;
     if (miniMap.current) { miniMap.current.remove(); miniMap.current = null; }
+    const L = window.L;
     const m = L.map(miniRef.current, { zoomControl: false, attributionControl: false, dragging: false, scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false, keyboard: false, tap: false });
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(m);
     if (item.kind === "pin") { m.setView([coord.lat, coord.lng], 15); L.marker([coord.lat, coord.lng]).addTo(m); }
