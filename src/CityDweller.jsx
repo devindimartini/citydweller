@@ -455,13 +455,18 @@ export default function CityDweller({ user, signOut }) {
 
   // ---------- map init ----------
   useEffect(() => {
+    if (!loaded) return; // wait until past the loading screen so the map div is rendered
     let cancelled = false;
-    loadLeaflet().then((L) => {
-      if (cancelled || mapRef.current) return;
-      if (!mapEl.current) { console.error("MAP INIT: container not ready"); setReady(false); return; }
-      LRef.current = L;
-      const map = L.map(mapEl.current, { zoomControl: false }).setView([14.5764, 121.0851], 12);
-      L.control.zoom({ position: "bottomright" }).addTo(map);
+    function init(triesLeft) {
+      loadLeaflet().then((L) => {
+        if (cancelled || mapRef.current) return;
+        if (!mapEl.current) {
+          if (triesLeft > 0) { setTimeout(() => init(triesLeft - 1), 100); return; }
+          console.error("MAP INIT: container never appeared"); setReady(false); return;
+        }
+        LRef.current = L;
+        const map = L.map(mapEl.current, { zoomControl: false }).setView([14.5764, 121.0851], 12);
+        L.control.zoom({ position: "bottomright" }).addTo(map);
       const baseLayers = {
         street: L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OpenStreetMap contributors", maxZoom: 19 }),
         satellite: L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { attribution: "© Esri", maxZoom: 19 }),
@@ -528,10 +533,12 @@ export default function CityDweller({ user, signOut }) {
       window.addEventListener("touchend", up);
 
       setReady(true);
-    }).catch((err) => { console.error("MAP INIT FAILED:", err); setReady(false); });
+      }).catch((err) => { console.error("MAP INIT FAILED:", err); setReady(false); });
+    }
+    init(30);
     return () => { cancelled = true; };
     // eslint-disable-next-line
-  }, []);
+  }, [loaded]);
 
   // ---------- creation ----------
   const placePin = useCallback((latlng) => {
