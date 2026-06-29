@@ -352,6 +352,8 @@ export default function CityDweller({ user, signOut }) {
   const [listSearch, setListSearch] = useState("");
   const [openNotebookId, setOpenNotebookId] = useState(null);
   const [addToNotebookFor, setAddToNotebookFor] = useState(null); // pinId being added to a notebook
+  const [didYouGoFor, setDidYouGoFor] = useState(null); // item id in the "did you go?" flow
+  const promptedWentRef = useRef(new Set()); // ids we've auto-prompted this session
 
   const [cityFilter, setCityFilter] = useState("all");
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -1083,6 +1085,31 @@ export default function CityDweller({ user, signOut }) {
     });
   }
 
+  // Complete the "did you go?" flow: mark visited, set date, add photos, append update to notes.
+  function completeWent(id, { date, media, update, stamp }) {
+    setItems((prev) => {
+      const next = prev.map((it) => {
+        if (it.id !== id) return it;
+        let note = it.note || "";
+        if (update && update.trim()) {
+          const label = stamp || date || new Date().toLocaleDateString();
+          note = (note ? note + "\n\n" : "") + `Update - ${label}: ${update.trim()}`;
+        }
+        return {
+          ...it,
+          status: STATUS.VISITED,
+          date: date || it.date,
+          note,
+          media: [...(it.media || []), ...(media || [])],
+        };
+      });
+      const u = next.find((it) => it.id === id);
+      if (u) persistItem(u);
+      return next;
+    });
+    setDidYouGoFor(null);
+  }
+
   // ---------- category management ----------
   function addCategory(name) {
     const clean = name.trim().toLowerCase();
@@ -1196,6 +1223,16 @@ export default function CityDweller({ user, signOut }) {
   }
 
   const panelItem = items.find((it) => it.id === panelId) || null;
+
+  // Occasional prompt: the first time you open a want-to-go item (per session), ask if you went.
+  useEffect(() => {
+    if (panelItem && panelMode === "read" && panelItem.status === STATUS.WISHLIST
+        && !promptedWentRef.current.has(panelItem.id) && !didYouGoFor) {
+      promptedWentRef.current.add(panelItem.id);
+      const t = setTimeout(() => setDidYouGoFor(panelItem.id), 600);
+      return () => clearTimeout(t);
+    }
+  }, [panelId, panelMode]); // eslint-disable-line
 
   const cities = Array.from(new Set(items.map((it) => it.city).filter(Boolean))).sort();
   const filtered = items.filter((it) => {
@@ -1544,7 +1581,7 @@ export default function CityDweller({ user, signOut }) {
                   <ListSection title="Been there" color={C.pinVisited} rows={visited} userPos={userPos} categories={categories} pathCategories={pathCategories} onFav={toggleFavorite} onClick={(it) => openReading(it)} />
                 )}
                 {(statusPill === "all" || statusPill === STATUS.WISHLIST) && (
-                  <ListSection title="Want to go" color={C.pinWishlist} rows={wishlist} userPos={userPos} categories={categories} pathCategories={pathCategories} onFav={toggleFavorite} onClick={(it) => openReading(it)} />
+                  <ListSection title="Want to go" color={C.pinWishlist} rows={wishlist} userPos={userPos} categories={categories} pathCategories={pathCategories} onFav={toggleFavorite} onClick={(it) => openReading(it)} onDidYouGo={(id) => setDidYouGoFor(id)} />
                 )}
 
                 {/* Favorites preview section */}
@@ -1775,6 +1812,7 @@ export default function CityDweller({ user, signOut }) {
             onLocate={() => locateAndClose(panelItem)}
             onAddToNotebook={panelItem.kind === "pin" ? () => setAddToNotebookFor({ pinId: panelItem.id }) : null}
             onToggleFavorite={() => toggleFavorite(panelItem.id)}
+            onDidYouGo={panelItem.status === STATUS.WISHLIST ? () => setDidYouGoFor(panelItem.id) : null}
           />
         )}
         {panelItem && panelMode === "edit" && view !== "events" && (
@@ -1843,6 +1881,15 @@ export default function CityDweller({ user, signOut }) {
             onRemove={(notebookId, pinId) => removePinFromNotebook(notebookId, pinId)}
           />
         )}
+
+        {/* Did you go? flow */}
+        {didYouGoFor && items.find((it) => it.id === didYouGoFor) && (
+          <DidYouGoModal
+            item={items.find((it) => it.id === didYouGoFor)}
+            onComplete={(payload) => completeWent(didYouGoFor, payload)}
+            onClose={() => setDidYouGoFor(null)}
+          />
+        )}
       </div>
 
       {/* Floating bottom navigation pill */}
@@ -1851,6 +1898,94 @@ export default function CityDweller({ user, signOut }) {
         <button style={{ ...s.bottomTab, ...(view === "list" ? s.bottomTabActive : {}) }} onClick={() => guardNav(() => { setPanelId(null); setView("list"); })}>List</button>
         <button style={{ ...s.bottomTab, ...(view === "nearby" ? s.bottomTabActive : {}) }} onClick={() => guardNav(() => { setPanelId(null); setView("nearby"); })}>Nearby</button>
         <button style={{ ...s.bottomTab, ...(view === "events" ? s.bottomTabActive : {}) }} onClick={() => guardNav(() => { setPanelId(null); setView("events"); })}>Events</button>
+      </div>
+    </div>
+  );
+}
+
+function DidYouGoModal({ item, onComplete, onClose }) {
+  const s = makeStyles();
+  const [step, setStep] = useState(1); // 1=date, 2=photos, 3=update
+  const today = new Date().toISOString().slice(0, 10);
+  const [date, setDate] = useState(today);
+  const [media, setMedia] = useState([]);
+  const [update, setUpdate] = useState("");
+  const fileRef = useRef(null);
+
+  function addFiles(files) {
+    const arr = Array.from(files);
+    Promise.all(arr.map((f) => new Promise((res) => {
+      const reader = new FileReader();
+      reader.onload = () => res({ id: uid(), type: f.type.startsWith("video") ? "video" : "image", name: f.name, url: reader.result });
+      reader.readAsDataURL(f);
+    }))).then((m) => setMedia((prev) => [...prev, ...m]));
+  }
+
+  function finish() {
+    // format date as M/D/YY to match the requested "Update - 12/15/26" style
+    let stamp = date;
+    if (date) { const d = new Date(date); stamp = `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(2)}`; }
+    onComplete({ date, media, update, stamp });
+  }
+
+  return (
+    <div style={s.modalWrap} onClick={onClose}>
+      <div style={{ ...s.modalCard, width: 360 }} onClick={(e) => e.stopPropagation()}>
+        <div style={s.modalHead}>
+          <strong>Did you go to {item.title || "this place"}?</strong>
+          <button style={s.iconBtn} onClick={onClose} aria-label="Close">✕</button>
+        </div>
+
+        <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+          {step === 1 && (
+            <>
+              <div style={{ fontSize: 14, color: C.sub }}>When did you go?</div>
+              <input type="date" style={s.input} value={date} onChange={(e) => setDate(e.target.value)} />
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button style={s.cancelAdd} onClick={onClose}>Cancel</button>
+                <button style={s.addBtn} onClick={() => setStep(2)}>Next</button>
+              </div>
+            </>
+          )}
+
+          {step === 2 && (
+            <>
+              <div style={{ fontSize: 14, color: C.sub }}>Add some photos from your visit (optional).</div>
+              {media.length > 0 && (
+                <div style={s.mediaGrid}>
+                  {media.map((m) => (
+                    <div key={m.id} style={s.mediaCell}>
+                      {m.type === "video" ? <video src={m.url} style={s.mediaThumb} /> : <img src={m.url} alt={m.name} style={s.mediaThumb} />}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <input ref={fileRef} type="file" accept="image/*,video/*" multiple style={{ display: "none" }} onChange={(e) => addFiles(e.target.files)} />
+              <button style={s.addBtnAlt} onClick={() => fileRef.current && fileRef.current.click()}>+ Add photos</button>
+              <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
+                <button style={s.cancelAdd} onClick={() => setStep(1)}>Back</button>
+                <button style={s.addBtn} onClick={() => setStep(3)}>Next</button>
+              </div>
+            </>
+          )}
+
+          {step === 3 && (
+            <>
+              <div style={{ fontSize: 14, color: C.sub }}>Add a quick update about your visit. It'll be appended to your notes.</div>
+              <textarea style={{ ...s.input, minHeight: 90, resize: "vertical" }} placeholder="How was it?" value={update} onChange={(e) => setUpdate(e.target.value)} />
+              <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
+                <button style={s.cancelAdd} onClick={() => setStep(2)}>Back</button>
+                <button style={s.addBtn} onClick={finish}>Mark as visited ✓</button>
+              </div>
+            </>
+          )}
+
+          <div style={{ display: "flex", gap: 6, justifyContent: "center", marginTop: 4 }}>
+            {[1, 2, 3].map((n) => (
+              <span key={n} style={{ width: 7, height: 7, borderRadius: "50%", background: n === step ? C.visited : C.border }} />
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -2072,7 +2207,7 @@ function AddToNotebookModal({ target, notebooks, items, onClose, onCreateNoteboo
   );
 }
 
-function ListSection({ title, color, rows, userPos, onClick, onFav, hideHead, categories, pathCategories }) {
+function ListSection({ title, color, rows, userPos, onClick, onFav, hideHead, categories, pathCategories, onDidYouGo }) {
   const s = makeStyles();
   return (
     <div style={s.section}>
@@ -2118,6 +2253,9 @@ function ListSection({ title, color, rows, userPos, onClick, onFav, hideHead, ca
                   </div>
                 </div>
               </button>
+              {onDidYouGo && it.status === STATUS.WISHLIST && it.kind === "pin" && (
+                <button style={s.cardWentBtn} onClick={(e) => { e.stopPropagation(); onDidYouGo(it.id); }}>✓ Did you go?</button>
+              )}
             </div>
           );
         })}
@@ -2323,7 +2461,7 @@ function EventPanel({ event, onClose, onChange, onAddress, onAddMedia, onRemoveM
   );
 }
 
-function ReadPanel({ item, onClose, onEdit, onToggleHidden, onLocate, onAddToNotebook, onToggleFavorite }) {
+function ReadPanel({ item, onClose, onEdit, onToggleHidden, onLocate, onAddToNotebook, onToggleFavorite, onDidYouGo }) {
   const s = makeStyles();
   const stColor = item.status === STATUS.VISITED ? C.pinVisited : C.pinWishlist;
   const stText = item.status === STATUS.VISITED ? "Been there" : "Want to go";
@@ -2403,6 +2541,10 @@ function ReadPanel({ item, onClose, onEdit, onToggleHidden, onLocate, onAddToNot
           {item.city && <span style={s.chip}>{item.city}</span>}
           {item.date && <span style={s.chip}>Visited {item.date}</span>}
         </div>
+
+        {onDidYouGo && (
+          <button style={s.didYouGoBtn} onClick={onDidYouGo}>✓ Did you go? Mark as visited</button>
+        )}
 
         {/* mini map */}
         {coord && (
@@ -2669,6 +2811,8 @@ function makeStyles() {
     sectionAction: { marginLeft: "auto", border: "none", background: "transparent", color: C.shape, cursor: "pointer", fontSize: 12.5, fontWeight: 600 },
     inlineLink: { border: "none", background: "transparent", color: C.shape, cursor: "pointer", fontSize: 13, padding: 0, textDecoration: "underline" },
     notebookBtn: { marginTop: 10, border: `1px solid ${C.shape}`, background: "#fff", color: C.shape, padding: "10px", borderRadius: 8, cursor: "pointer", fontSize: 13.5, fontWeight: 600 },
+    didYouGoBtn: { marginTop: 4, border: "none", background: C.pinVisited, color: "#fff", padding: "11px", borderRadius: 999, cursor: "pointer", fontSize: 13.5, fontWeight: 700, width: "100%" },
+    cardWentBtn: { marginTop: 6, border: `1px solid ${C.pinVisited}`, background: "#fff", color: C.pinVisited, padding: "7px", borderRadius: 999, cursor: "pointer", fontSize: 12.5, fontWeight: 700, width: "100%" },
     nbHeadRow: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
     nbBack: { border: "none", background: "transparent", color: C.text, cursor: "pointer", fontSize: 14, fontWeight: 600, padding: 0 },
     nbDelete: { border: `1px solid ${C.border}`, background: C.card, color: C.wishlist, padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 13 },
