@@ -302,9 +302,11 @@ function googleMapsUrl(lat, lng, label) {
 }
 
 const C = {
-  visited: "#1D9E75",
+  visited: "#913B09",
   wishlist: "#D85A30",
-  shape: "#534AB7",
+  shape: "#53B093",
+  pinVisited: "#2FA353",
+  pinWishlist: "#1C1C1C",
   bg: "#F1EFE8",
   card: "#ffffff",
   border: "#D3D1C7",
@@ -626,9 +628,9 @@ export default function CityDweller({ user, signOut }) {
       if (it.kind === "shape" && (!showLinesOnMap || !mapPathCats.has(it.category))) { delete layersRef.current[it.id]; return; }
 
       let layer;
-      const color = it.status === STATUS.VISITED ? C.visited : C.wishlist;
+      const color = it.status === STATUS.VISITED ? C.pinVisited : C.pinWishlist;
       if (it.kind === "pin") {
-        layer = L.marker([it.lat, it.lng], { icon: pinIcon(L, color, iconFor(categories, it.category), it.favorite) });
+        layer = L.marker([it.lat, it.lng], { icon: pinIcon(L, color, iconFor(categories, it.category), it.favorite, it.status === STATUS.VISITED) });
       } else {
         layer = L.polyline(it.path, { color: pathCatColor(it.category), weight: 5 });
       }
@@ -720,14 +722,19 @@ export default function CityDweller({ user, signOut }) {
     });
   }, [events, ready]);
 
-  function pinIcon(L, color, emoji, favorite) {
-    const star = favorite ? `<div style="position:absolute;top:-4px;right:-2px;width:16px;height:16px;border-radius:50%;background:#E0A21C;color:#fff;font-size:10px;line-height:16px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,0.3);">★</div>` : "";
+  function pinIcon(L, color, emoji, favorite, visited) {
+    // flatten the emoji to a solid silhouette: black on been-there, white on want-to-go
+    const emojiFilter = visited ? "grayscale(1) brightness(0)" : "grayscale(1) brightness(0) invert(1)";
+    const check = visited ? `<div style="position:absolute;top:-4px;right:-2px;width:16px;height:16px;border-radius:50%;background:#fff;color:#1C1C1C;font-size:10px;line-height:13px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,0.3);border:1.5px solid #913B09;">✓</div>` : "";
+    const starPos = visited ? "top:-4px;left:-2px;" : "top:-4px;right:-2px;";
+    const star = favorite ? `<div style="position:absolute;${starPos}width:16px;height:16px;border-radius:50%;background:#E0A21C;color:#fff;font-size:10px;line-height:16px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,0.3);">★</div>` : "";
     const html = `
       <div style="position:relative;width:30px;height:42px;">
         <svg width="30" height="42" viewBox="0 0 30 42" xmlns="http://www.w3.org/2000/svg">
           <path d="M15 0C6.7 0 0 6.7 0 15c0 11 15 27 15 27s15-16 15-27C30 6.7 23.3 0 15 0z" fill="${color}"/>
         </svg>
-        <div style="position:absolute;top:4px;left:0;width:30px;text-align:center;font-size:14px;filter:grayscale(1) brightness(0) invert(1);">${emoji || "📍"}</div>
+        <div style="position:absolute;top:4px;left:0;width:30px;text-align:center;font-size:14px;filter:${emojiFilter};">${emoji || "📍"}</div>
+        ${check}
         ${star}
       </div>`;
     return L.divIcon({ html, className: "cd-pin", iconSize: [30, 42], iconAnchor: [15, 42], tooltipAnchor: [0, -36] });
@@ -1207,16 +1214,12 @@ export default function CityDweller({ user, signOut }) {
   return (
     <div style={s.app}>
       <header style={s.header}>
-        <div style={s.brand}>
+        <div style={{ ...s.brand, ...(view === "map" ? {} : s.brandOnLight) }}>
           <span style={s.logoDot} />
           <span>CityDweller</span>
         </div>
         <div style={s.tabs}>
-          <button style={{ ...s.tab, ...(view === "map" ? s.tabActive : {}) }} onClick={() => guardNav(() => { setPanelId(null); setView("map"); setTimeout(() => mapRef.current && mapRef.current.invalidateSize(), 50); })}>Map</button>
-          <button style={{ ...s.tab, ...(view === "list" ? s.tabActive : {}) }} onClick={() => guardNav(() => { setPanelId(null); setView("list"); })}>List</button>
-          <button style={{ ...s.tab, ...(view === "nearby" ? s.tabActive : {}) }} onClick={() => guardNav(() => { setPanelId(null); setView("nearby"); })}>Nearby</button>
-          <button style={{ ...s.tab, ...(view === "events" ? s.tabActive : {}) }} onClick={() => guardNav(() => { setPanelId(null); setView("events"); })}>Events</button>
-          <button style={{ ...s.tab }} onClick={() => signOut && signOut()} title="Sign out">⎋</button>
+          <button style={s.signOutBtn} onClick={() => signOut && signOut()} title="Sign out">⎋ Sign out</button>
         </div>
       </header>
 
@@ -1224,12 +1227,6 @@ export default function CityDweller({ user, signOut }) {
         {/* MAP VIEW */}
         <div style={{ ...s.mapWrap, display: view === "map" ? "flex" : "none" }}>
           <div style={s.mapToolbar}>
-            <span style={s.toolHint}>
-              {mapMode === "addPin" ? "Click the map to place your pin"
-                : mapMode === "addLine" ? "Press and drag on the map to draw a path"
-                : mapMode === "addTransit" ? "Tap the map to place a transit stop"
-                : "View mode — tap a pin or path to open it"}
-            </span>
             <div style={s.toolBtns}>
               {!adding && mapMode !== "addTransit" && (
                 <div style={s.filterWrap}>
@@ -1306,10 +1303,10 @@ export default function CityDweller({ user, signOut }) {
                 <button style={s.cancelAdd} onClick={() => { setMapMode("view"); setMapCursor(""); }}>Cancel</button>
               ) : !adding ? (
                 <>
-                  <button style={s.addBtn} onClick={enterAddPin}>+ Add pin</button>
-                  <button style={s.addBtnAlt} onClick={enterAddLine}>+ Add path</button>
-                  <button style={s.addBtnTransit} onClick={enterAddTransit}>🚇 Add transit stop</button>
-                  <button style={s.addBtnEvent} onClick={() => { setView("map"); createEvent(); }}>🚩 Add event</button>
+                  <button style={{ ...s.addBtn, borderRadius: 999, whiteSpace: "nowrap" }} onClick={enterAddPin}>+ Add pin</button>
+                  <button style={{ ...s.addBtnAlt, borderRadius: 999, whiteSpace: "nowrap" }} onClick={enterAddLine}>+ Add path</button>
+                  <button style={{ ...s.addBtnTransit, borderRadius: 999, whiteSpace: "nowrap" }} onClick={enterAddTransit}>🚇 Add transit stop</button>
+                  <button style={{ ...s.addBtnEvent, borderRadius: 999, whiteSpace: "nowrap" }} onClick={() => { setView("map"); createEvent(); }}>🚩 Add event</button>
                 </>
               ) : (
                 <button style={s.cancelAdd} onClick={exitAddMode}>Cancel</button>
@@ -1328,8 +1325,12 @@ export default function CityDweller({ user, signOut }) {
           <div ref={mapEl} style={s.map} />
           {ready && (
             <div style={s.viewSwitcher}>
-              {[["street", "Street"], ["satellite", "Satellite"], ["terrain", "Terrain"]].map(([v, label]) => (
-                <button key={v} style={{ ...s.viewBtn, ...(mapView === v ? s.viewBtnOn : {}) }} onClick={() => switchMapView(v)}>{label}</button>
+              {[
+                ["street", "Street", <svg key="s" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>],
+                ["satellite", "Satellite", <svg key="sat" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>],
+                ["terrain", "Terrain", <svg key="t" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 20h18L14 8l-3 5-2-3-6 10z"/></svg>],
+              ].map(([v, label, icon]) => (
+                <button key={v} title={label} aria-label={label} style={{ ...s.viewBtn, ...(mapView === v ? s.viewBtnOn : {}) }} onClick={() => switchMapView(v)}>{icon}</button>
               ))}
             </div>
           )}
@@ -1521,10 +1522,10 @@ export default function CityDweller({ user, signOut }) {
                 </div>
 
                 {(statusPill === "all" || statusPill === STATUS.VISITED) && (
-                  <ListSection title="Been there" color={C.visited} rows={visited} userPos={userPos} categories={categories} pathCategories={pathCategories} onFav={toggleFavorite} onClick={(it) => openReading(it)} />
+                  <ListSection title="Been there" color={C.pinVisited} rows={visited} userPos={userPos} categories={categories} pathCategories={pathCategories} onFav={toggleFavorite} onClick={(it) => openReading(it)} />
                 )}
                 {(statusPill === "all" || statusPill === STATUS.WISHLIST) && (
-                  <ListSection title="Want to go" color={C.wishlist} rows={wishlist} userPos={userPos} categories={categories} pathCategories={pathCategories} onFav={toggleFavorite} onClick={(it) => openReading(it)} />
+                  <ListSection title="Want to go" color={C.pinWishlist} rows={wishlist} userPos={userPos} categories={categories} pathCategories={pathCategories} onFav={toggleFavorite} onClick={(it) => openReading(it)} />
                 )}
 
                 {/* Favorites preview section */}
@@ -1678,7 +1679,7 @@ export default function CityDweller({ user, signOut }) {
                 <h3 style={s.sectionTitle}>Events</h3>
                 <span style={s.countPill}>{events.length}</span>
               </div>
-              <button style={s.addBtn} onClick={() => createEvent()}>+ New event</button>
+              <button style={{ ...s.addBtn, background: "#C0392B" }} onClick={() => createEvent()}>+ New event</button>
             </div>
             {events.length === 0 && <p style={s.sectionEmpty}>No events yet. Tap “New event” to add one with a date and venue.</p>}
             {(() => {
@@ -1823,6 +1824,14 @@ export default function CityDweller({ user, signOut }) {
             onRemove={(notebookId, pinId) => removePinFromNotebook(notebookId, pinId)}
           />
         )}
+      </div>
+
+      {/* Floating bottom navigation pill */}
+      <div style={s.bottomNav}>
+        <button style={{ ...s.bottomTab, ...(view === "map" ? s.bottomTabActive : {}) }} onClick={() => guardNav(() => { setPanelId(null); setView("map"); setTimeout(() => mapRef.current && mapRef.current.invalidateSize(), 50); })}>Map</button>
+        <button style={{ ...s.bottomTab, ...(view === "list" ? s.bottomTabActive : {}) }} onClick={() => guardNav(() => { setPanelId(null); setView("list"); })}>List</button>
+        <button style={{ ...s.bottomTab, ...(view === "nearby" ? s.bottomTabActive : {}) }} onClick={() => guardNav(() => { setPanelId(null); setView("nearby"); })}>Nearby</button>
+        <button style={{ ...s.bottomTab, ...(view === "events" ? s.bottomTabActive : {}) }} onClick={() => guardNav(() => { setPanelId(null); setView("events"); })}>Events</button>
       </div>
     </div>
   );
@@ -2058,7 +2067,7 @@ function ListSection({ title, color, rows, userPos, onClick, onFav, hideHead, ca
       {rows.length === 0 && !hideHead && <p style={s.sectionEmpty}>Nothing here yet.</p>}
       <div style={s.cards}>
         {rows.map((it) => {
-          const stColor = it.status === STATUS.VISITED ? C.visited : C.wishlist;
+          const stColor = it.status === STATUS.VISITED ? C.pinVisited : C.pinWishlist;
           let dist = null;
           if (userPos) { const co = itemCoord(it); if (co) dist = distanceKm(userPos, co); }
           return (
@@ -2297,7 +2306,7 @@ function EventPanel({ event, onClose, onChange, onAddress, onAddMedia, onRemoveM
 
 function ReadPanel({ item, onClose, onEdit, onToggleHidden, onLocate, onAddToNotebook, onToggleFavorite }) {
   const s = makeStyles();
-  const stColor = item.status === STATUS.VISITED ? C.visited : C.wishlist;
+  const stColor = item.status === STATUS.VISITED ? C.pinVisited : C.pinWishlist;
   const stText = item.status === STATUS.VISITED ? "Been there" : "Want to go";
   const titleEmpty = !item.title || !item.title.trim();
 
@@ -2337,6 +2346,16 @@ function ReadPanel({ item, onClose, onEdit, onToggleHidden, onLocate, onAddToNot
       <div style={s.editorHead}>
         <strong style={s.editorKind}>{item.kind === "pin" ? "Pin" : "Path"}</strong>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <button
+            style={{ ...s.headIconBtn, ...(item.hidden ? s.headIconBtnOff : {}) }}
+            onClick={onToggleHidden}
+            aria-label={item.hidden ? "Hidden on map — tap to show" : "Shown on map — tap to hide"}
+            title={item.hidden ? "Hidden on map — tap to show" : "Shown on map — tap to hide"}
+          >
+            {item.hidden
+              ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 8 10 8a18.5 18.5 0 0 1-2.16 3.19M6.61 6.61A18.5 18.5 0 0 0 2 12s3 8 10 8a9.12 9.12 0 0 0 5.39-1.61"/><path d="M14.12 14.12A3 3 0 1 1 9.88 9.88"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
+              : <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-8 10-8 10 8 10 8-3 8-10 8-10-8-10-8z"/><circle cx="12" cy="12" r="3"/></svg>}
+          </button>
           <button style={{ ...s.favBtn, ...(item.favorite ? s.favBtnOn : {}) }} onClick={onToggleFavorite} aria-label="Favorite">{item.favorite ? "★" : "☆"}</button>
           <button style={s.iconBtn} onClick={onClose} aria-label="Close">✕</button>
         </div>
@@ -2359,34 +2378,12 @@ function ReadPanel({ item, onClose, onEdit, onToggleHidden, onLocate, onAddToNot
           </div>
         )}
 
-        {item.note && (
-          <>
-            <div style={s.readLabel}>Notes</div>
-            <div style={s.readNote}>{item.note}</div>
-          </>
-        )}
-
         <div style={s.chipRow}>
-          <span style={{ ...s.chip, color: stColor, borderColor: stColor }}>{stText}</span>
+          <span style={{ ...s.chip, background: stColor, borderColor: stColor, color: "#fff" }}>{stText}</span>
           <span style={s.chip}>{catLabel(item.category)}</span>
           {item.city && <span style={s.chip}>{item.city}</span>}
           {item.date && <span style={s.chip}>Visited {item.date}</span>}
         </div>
-
-        {onAddToNotebook && (
-          <button style={s.notebookBtn} onClick={onAddToNotebook}>📓 Add to notebook</button>
-        )}
-
-        <button
-          style={{ ...s.eyeToggle, ...(item.hidden ? s.eyeToggleOff : {}) }}
-          onClick={onToggleHidden}
-          aria-label={item.hidden ? "Hidden on map — tap to show" : "Shown on map — tap to hide"}
-          title={item.hidden ? "Hidden on map — tap to show" : "Shown on map — tap to hide"}
-        >
-          {item.hidden
-            ? <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 8 10 8a18.5 18.5 0 0 1-2.16 3.19M6.61 6.61A18.5 18.5 0 0 0 2 12s3 8 10 8a9.12 9.12 0 0 0 5.39-1.61"/><path d="M14.12 14.12A3 3 0 1 1 9.88 9.88"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
-            : <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-8 10-8 10 8 10 8-3 8-10 8-10-8-10-8z"/><circle cx="12" cy="12" r="3"/></svg>}
-        </button>
 
         {/* mini map */}
         {coord && (
@@ -2395,6 +2392,17 @@ function ReadPanel({ item, onClose, onEdit, onToggleHidden, onLocate, onAddToNot
             <div ref={miniRef} style={s.miniMap} />
             <button style={s.miniMapBtn} onClick={onLocate}>View on full map</button>
           </>
+        )}
+
+        {item.note && (
+          <>
+            <div style={s.readLabel}>Notes</div>
+            <div style={s.readNote}>{item.note}</div>
+          </>
+        )}
+
+        {onAddToNotebook && (
+          <button style={s.notebookBtn} onClick={onAddToNotebook}>📓 Add to notebook</button>
         )}
 
         {/* Google Maps */}
@@ -2494,11 +2502,11 @@ function EditPanel({ item, categories, onChange, onAddMedia, onRemoveMedia, onSa
         <label style={s.label}>Status</label>
         <div style={s.segment}>
           <button
-            style={{ ...s.segBtn, ...(item.status === STATUS.VISITED ? { background: C.visited, color: "#fff" } : {}) }}
+            style={{ ...s.segBtn, ...(item.status === STATUS.VISITED ? { background: C.pinVisited, color: "#fff" } : {}) }}
             onClick={() => onChange({ status: STATUS.VISITED })}
           >✓ Been there</button>
           <button
-            style={{ ...s.segBtn, ...(item.status === STATUS.WISHLIST ? { background: C.wishlist, color: "#fff" } : {}) }}
+            style={{ ...s.segBtn, ...(item.status === STATUS.WISHLIST ? { background: C.pinWishlist, color: "#fff" } : {}) }}
             onClick={() => onChange({ status: STATUS.WISHLIST, date: "" })}
           >★ Want to go</button>
         </div>
@@ -2554,19 +2562,24 @@ function EditPanel({ item, categories, onChange, onAddMedia, onRemoveMedia, onSa
 function makeStyles() {
   return {
     app: { display: "flex", flexDirection: "column", height: "100vh", width: "100%", fontFamily: "system-ui, sans-serif", background: C.bg, color: C.text, overflow: "hidden" },
-    header: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", background: C.card, borderBottom: `1px solid ${C.border}` },
-    brand: { display: "flex", alignItems: "center", gap: 8, fontWeight: 600, fontSize: 17 },
-    logoDot: { width: 12, height: 12, borderRadius: "50% 50% 50% 0", background: C.visited, transform: "rotate(-45deg)" },
-    tabs: { display: "flex", gap: 4, background: C.bg, padding: 3, borderRadius: 10 },
+    header: { position: "absolute", top: 0, left: 0, right: 0, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", background: "transparent", zIndex: 700, pointerEvents: "none" },
+    brand: { display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 18, color: "#fff", textShadow: "0 2px 6px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.85), 0 0 16px rgba(0,0,0,0.7), 0 1px 2px rgba(0,0,0,0.95)", pointerEvents: "auto" },
+    brandOnLight: { color: C.text, textShadow: "none" },
+    logoDot: { width: 12, height: 12, borderRadius: "50% 50% 50% 0", background: C.visited, transform: "rotate(-45deg)", boxShadow: "0 1px 3px rgba(0,0,0,0.4)" },
+    tabs: { display: "flex", gap: 4, pointerEvents: "auto", zIndex: 750, position: "relative" },
+    signOutBtn: { border: "none", background: "rgba(255,255,255,0.95)", color: C.text, padding: "7px 14px", borderRadius: 999, cursor: "pointer", fontSize: 13, fontWeight: 600, boxShadow: "0 2px 8px rgba(0,0,0,0.25)", display: "flex", alignItems: "center", justifyContent: "center", gap: 5 },
     tab: { border: "none", background: "transparent", padding: "6px 16px", borderRadius: 8, cursor: "pointer", fontSize: 14, color: C.sub },
     tabActive: { background: C.card, color: C.text, fontWeight: 600, boxShadow: "0 1px 2px rgba(0,0,0,0.08)" },
+    bottomNav: { position: "fixed", bottom: 16, left: "50%", transform: "translateX(-50%)", display: "inline-flex", gap: 4, background: "#fff", padding: 5, borderRadius: 999, boxShadow: "0 4px 18px rgba(0,0,0,0.18)", border: `1px solid ${C.border}`, zIndex: 900 },
+    bottomTab: { border: "none", background: "transparent", padding: "8px 18px", borderRadius: 999, cursor: "pointer", fontSize: 13.5, fontWeight: 600, color: C.sub },
+    bottomTabActive: { background: C.visited, color: "#fff" },
     body: { flex: 1, position: "relative", display: "flex", overflow: "hidden", minHeight: 0 },
     mapWrap: { flex: 1, flexDirection: "column", position: "relative", minHeight: 0, height: "100%" },
-    fabRow: { position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 16, zIndex: 600, alignItems: "center" },
+    fabRow: { position: "absolute", bottom: 84, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 16, zIndex: 600, alignItems: "center" },
     fab: { width: 52, height: 52, borderRadius: "50%", border: `1px solid ${C.border}`, background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 3px 10px rgba(0,0,0,0.18)", padding: 0 },
     fabActive: { borderColor: "#185FA5", boxShadow: "0 0 0 3px rgba(24,95,165,0.35), 0 3px 10px rgba(0,0,0,0.18)" },
     fabGlyph: { fontSize: 24, lineHeight: 1, color: C.text },
-    searchPanel: { position: "absolute", bottom: 86, left: 12, right: 12, zIndex: 650, maxWidth: 520, marginLeft: "auto", marginRight: "auto" },
+    searchPanel: { position: "absolute", bottom: 148, left: 12, right: 12, zIndex: 650, maxWidth: 520, marginLeft: "auto", marginRight: "auto" },
     searchForm: { display: "flex", alignItems: "center", gap: 6, border: `1px solid ${C.border}`, borderRadius: 26, padding: "5px 6px 5px 14px", background: "#fff", boxShadow: "0 4px 16px rgba(0,0,0,0.14)" },
     searchIcon: { fontSize: 18, color: C.sub, lineHeight: 1 },
     searchInput: { flex: 1, border: "none", outline: "none", fontSize: 14, fontFamily: "inherit", background: "transparent", color: C.text },
@@ -2580,11 +2593,11 @@ function makeStyles() {
     searchResultAddr: { fontSize: 12.5, color: C.sub, marginTop: 2 },
     snapMsg: { position: "absolute", bottom: 92, left: 12, right: 12, maxWidth: 420, margin: "0 auto", background: C.wishlist, color: "#fff", padding: "10px 36px 10px 14px", borderRadius: 12, fontSize: 13, zIndex: 650, boxShadow: "0 4px 16px rgba(0,0,0,0.18)" },
     snapMsgClose: { position: "absolute", top: 8, right: 10, border: "none", background: "transparent", color: "#fff", cursor: "pointer", fontSize: 14 },
-    mapToolbar: { position: "absolute", top: 12, left: 12, right: 12, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, zIndex: 600, flexWrap: "nowrap", pointerEvents: "none" },
-    toolHint: { fontSize: 12.5, color: C.text, background: "#fff", padding: "6px 12px", borderRadius: 20, boxShadow: "0 2px 8px rgba(0,0,0,0.12)", border: `1px solid ${C.border}`, pointerEvents: "auto", flexShrink: 0, alignSelf: "flex-start" },
-    toolBtns: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end", pointerEvents: "auto", flex: 1, marginLeft: 8 },
+    mapToolbar: { position: "absolute", top: 52, left: 12, right: 12, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, zIndex: 600, flexWrap: "nowrap", pointerEvents: "none" },
+    toolHint: { position: "absolute", top: 14, left: "50%", transform: "translateX(-50%)", fontSize: 12.5, color: C.text, background: "#fff", padding: "6px 12px", borderRadius: 20, boxShadow: "0 2px 8px rgba(0,0,0,0.12)", border: `1px solid ${C.border}`, pointerEvents: "auto", zIndex: 710, whiteSpace: "nowrap", maxWidth: "60%", overflow: "hidden", textOverflow: "ellipsis" },
+    toolBtns: { display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end", pointerEvents: "auto", marginLeft: "auto" },
     filterWrap: { position: "relative" },
-    filterToggle: { border: `1px solid ${C.border}`, background: C.card, color: C.text, padding: "7px 12px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 600 },
+    filterToggle: { border: `1px solid ${C.border}`, background: C.card, color: C.text, padding: "7px 12px", borderRadius: 999, cursor: "pointer", fontSize: 13, fontWeight: 600 },
     filterToggleActive: { borderColor: C.shape, color: C.shape },
     catMenu: { position: "absolute", top: "100%", right: 0, marginTop: 4, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, boxShadow: "0 6px 20px rgba(0,0,0,0.14)", padding: 8, minWidth: 200, maxHeight: 360, overflowY: "auto", zIndex: 800 },
     accHeader: { display: "flex", alignItems: "center", gap: 8, padding: "4px 4px" },
@@ -2616,15 +2629,15 @@ function makeStyles() {
     eventCountdown: { color: "#fff", borderRadius: 10, padding: "12px", textAlign: "center", fontWeight: 700, fontSize: 15, marginBottom: 6 },
     fieldNote: { fontSize: 11.5, color: C.sub, marginTop: 2 },
     checkRow: { display: "flex", alignItems: "center", gap: 8, fontSize: 14, cursor: "pointer", marginTop: 12, color: C.text },
-    cancelAdd: { border: `1px solid ${C.border}`, background: C.card, color: C.sub, padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13 },
+    cancelAdd: { border: `1px solid ${C.border}`, background: C.card, color: C.sub, padding: "7px 14px", borderRadius: 999, cursor: "pointer", fontSize: 13 },
     divider: { width: 1, height: 18, background: C.border, display: "inline-block" },
     drawBanner: { position: "absolute", top: 52, left: "50%", transform: "translateX(-50%)", background: C.shape, color: "#fff", padding: "6px 14px", borderRadius: 20, fontSize: 12.5, zIndex: 500, boxShadow: "0 2px 8px rgba(0,0,0,0.2)", maxWidth: "90%", textAlign: "center" },
     map: { position: "absolute", inset: 0, width: "100%", height: "100%" },
-    viewSwitcher: { position: "absolute", bottom: 28, left: 12, zIndex: 540, display: "inline-flex", gap: 2, background: "#fff", borderRadius: 8, padding: 3, boxShadow: "0 2px 8px rgba(0,0,0,0.18)" },
-    viewBtn: { border: "none", background: "transparent", padding: "5px 10px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600, color: C.sub },
+    viewSwitcher: { position: "absolute", bottom: 96, right: 10, zIndex: 540, display: "inline-flex", flexDirection: "column", gap: 0, background: "#fff", borderRadius: 4, padding: 0, boxShadow: "0 1px 5px rgba(0,0,0,0.4)", overflow: "hidden", border: "2px solid rgba(0,0,0,0.2)" },
+    viewBtn: { border: "none", borderBottom: "1px solid #ccc", background: "#fff", width: 30, height: 30, cursor: "pointer", color: C.sub, display: "flex", alignItems: "center", justifyContent: "center", padding: 0 },
     viewBtnOn: { background: C.shape, color: "#fff" },
     loading: { position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: C.sub },
-    listWrap: { flex: 1, overflowY: "auto", padding: "16px 20px" },
+    listWrap: { flex: 1, overflowY: "auto", padding: "56px 20px 88px" },
     modeToggle: { display: "inline-flex", gap: 4, background: C.bg, padding: 3, borderRadius: 10, marginBottom: 16 },
     listTopRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
     listSearchToggle: { border: `1px solid ${C.border}`, background: C.card, color: C.text, width: 38, height: 38, borderRadius: 10, cursor: "pointer", fontSize: 18, marginBottom: 16 },
@@ -2668,6 +2681,8 @@ function makeStyles() {
     cardStarOn: { color: "#E0A21C" },
     favBtn: { border: "none", background: "transparent", cursor: "pointer", fontSize: 19, color: C.sub, padding: "0 4px" },
     favBtnOn: { color: "#E0A21C" },
+    headIconBtn: { border: "none", background: "transparent", cursor: "pointer", color: C.sub, padding: "0 2px", display: "flex", alignItems: "center" },
+    headIconBtnOff: { color: "#C0392B" },
     manageLink: { border: "none", background: "transparent", color: C.shape, cursor: "pointer", fontSize: 12, fontWeight: 600, marginLeft: 6, padding: 0 },
     catIconBtn: { border: `1px solid ${C.border}`, background: C.bg, borderRadius: 8, width: 34, height: 34, fontSize: 17, cursor: "pointer", padding: 0, marginRight: 8 },
     iconGrid: { display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: 4, padding: "4px 12px 12px" },
@@ -2685,7 +2700,7 @@ function makeStyles() {
     cardTitle: { fontSize: 15, fontWeight: 600 },
     cardDate: { fontSize: 12, color: C.sub },
     chipRow: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" },
-    chip: { fontSize: 11, padding: "2px 8px", borderRadius: 6, background: C.bg, color: C.sub, border: `1px solid ${C.border}` },
+    chip: { fontSize: 11, padding: "2px 8px", borderRadius: 20, background: C.bg, color: C.sub, border: `1px solid ${C.border}` },
     cardNote: { fontSize: 13, color: C.sub, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" },
     cardFoot: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 },
     mediaCount: { fontSize: 12, color: C.sub },
@@ -2693,7 +2708,7 @@ function makeStyles() {
     empty: { color: C.sub, fontSize: 14 },
     nearbyPrompt: { background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 20, textAlign: "center" },
 
-    editor: { position: "absolute", top: 0, right: 0, height: "100%", width: 340, maxWidth: "90%", background: C.card, borderLeft: `1px solid ${C.border}`, boxShadow: "-4px 0 16px rgba(0,0,0,0.08)", display: "flex", flexDirection: "column", zIndex: 600 },
+    editor: { position: "absolute", top: 0, right: 0, height: "100%", width: 340, maxWidth: "90%", background: C.card, borderLeft: `1px solid ${C.border}`, boxShadow: "-4px 0 16px rgba(0,0,0,0.08)", display: "flex", flexDirection: "column", zIndex: 950 },
     editorHead: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", borderBottom: `1px solid ${C.border}` },
     editorKind: { fontSize: 15 },
     iconBtn: { border: "none", background: "transparent", fontSize: 16, cursor: "pointer", color: C.sub },
