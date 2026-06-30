@@ -178,44 +178,65 @@ function loadLeaflet() {
   });
 }
 
-/* Replace with a real geocoder call in your deployment. */
-function reverseGeocode(/* lat, lng */) {
-  return Promise.resolve("");
+/* Google Geocoding API key (browser-safe with key restrictions). */
+const GOOGLE_KEY = import.meta.env.VITE_GOOGLE_MAPS_KEY || "";
+const GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json";
+
+// pull a city-like name out of Google's address_components
+function cityFromComponents(components) {
+  if (!components) return "";
+  const find = (type) => { const c = components.find((x) => x.types.includes(type)); return c ? c.long_name : ""; };
+  return find("locality") || find("postal_town") || find("administrative_area_level_2") || find("administrative_area_level_1") || "";
 }
 
-/*
-  searchPlaces(query) -> Promise<Array<{ name, address, lat, lng }>>
-  Turns a search string into a list of matching places. Needs an external
-  geocoding/places service, which the sandbox blocks — so it returns [] here.
-  In your real app, replace the body with a call to the Google Places API
-  (Autocomplete + Place Details) or the Geocoding API and map the results
-  to { name, address, lat, lng }.
-*/
-function searchPlaces(/* query */) {
-  return Promise.resolve([]);
+/* reverseGeocode(lat, lng) -> Promise<string city> */
+function reverseGeocode(lat, lng) {
+  if (!GOOGLE_KEY || lat == null || lng == null) return Promise.resolve("");
+  const url = `${GEOCODE_URL}?latlng=${lat},${lng}&key=${GOOGLE_KEY}`;
+  return fetch(url)
+    .then((r) => r.json())
+    .then((d) => {
+      if (d.status !== "OK" || !d.results || !d.results.length) return "";
+      return cityFromComponents(d.results[0].address_components);
+    })
+    .catch(() => "");
 }
 
-/*
-  fetchPlaceDetails({lat, lng, title}) -> Promise<{rating, totalRatings, reviews:[{author,text,rating}], photos:[url]} | null>
-  Returns Google listing data for a location. Needs the Google Places API
-  (Place Search to resolve the place, then Place Details) plus your API key
-  and billing, and must follow Google's display rules. The sandbox can't
-  call it, so it returns null. In your cloud build, implement this against
-  the Places API and render the result in your own styled section.
-*/
+/* searchPlaces(query) -> Promise<Array<{name, address, lat, lng}>> */
+function searchPlaces(query) {
+  if (!GOOGLE_KEY || !query || !query.trim()) return Promise.resolve([]);
+  const url = `${GEOCODE_URL}?address=${encodeURIComponent(query)}&key=${GOOGLE_KEY}`;
+  return fetch(url)
+    .then((r) => r.json())
+    .then((d) => {
+      if (d.status !== "OK" || !d.results) return [];
+      return d.results.slice(0, 6).map((res) => ({
+        name: res.formatted_address.split(",")[0],
+        address: res.formatted_address,
+        lat: res.geometry.location.lat,
+        lng: res.geometry.location.lng,
+      }));
+    })
+    .catch(() => []);
+}
+
+/* fetchPlaceDetails — needs the Places API via a backend function; stubbed for now. */
 function fetchPlaceDetails(/* {lat, lng, title} */) {
   return Promise.resolve(null);
 }
 
-/*
-  geocodeAddress(address) -> Promise<{lat, lng} | null>
-  Turns a typed address/venue into coordinates. Needs the Geocoding API and
-  your key; the sandbox can't call it, so it returns null and the caller
-  falls back to the map center / current location. Wire to Google's
-  Geocoder in your cloud build.
-*/
-function geocodeAddress(/* address */) {
-  return Promise.resolve(null);
+/* geocodeAddress(address) -> Promise<{lat, lng} | null> */
+function geocodeAddress(address) {
+  if (!GOOGLE_KEY || !address || !address.trim()) return Promise.resolve(null);
+  const url = `${GEOCODE_URL}?address=${encodeURIComponent(address)}&key=${GOOGLE_KEY}`;
+  return fetch(url)
+    .then((r) => r.json())
+    .then((d) => {
+      if (d.status !== "OK" || !d.results || !d.results.length) return null;
+      const loc = d.results[0].geometry.location;
+      return { lat: loc.lat, lng: loc.lng };
+    })
+    .catch(() => null);
 }
 
 // Collect the relevant date instances from an event into {start, end} windows.
